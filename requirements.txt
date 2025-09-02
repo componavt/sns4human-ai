@@ -1,0 +1,10 @@
+bertopic[visualization]
+sentence-transformers
+umap-learn
+hdbscan
+pandas
+pyarrow
+tqdm
+emoji
+regex
+scikit-learn
