@@ -115,6 +115,8 @@ def build_bertopic_model(df: pd.DataFrame, outputs_dir: str):
 
     print(f"Outputs saved in {outputs_dir}")
 
+from dotenv import load_dotenv
+load_dotenv()
 
 if __name__ == "__main__":
     # Configurable paths
