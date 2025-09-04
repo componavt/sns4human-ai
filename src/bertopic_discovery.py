@@ -120,7 +120,8 @@ load_dotenv()
 
 if __name__ == "__main__":
     # Configurable paths
-    posts_dir = os.environ.get("POSTS_DIR", "data/raw_posts")  # set your path
+    # posts_dir = os.environ.get("POSTS_DIR", "data/raw_posts")  # set your path
+    posts_dir = "../sns4human/data/vk/posts/religion/concerto.csv"  # temp
     parquet_path = os.environ.get("PARQUET_PATH", "data/all_posts.parquet")
     outputs_dir = os.environ.get("OUTPUTS_DIR", "outputs")
 
