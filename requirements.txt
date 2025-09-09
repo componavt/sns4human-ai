@@ -9,3 +9,4 @@ emoji
 regex
 scikit-learn
 python-dotenv
+nltk
