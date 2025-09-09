@@ -144,16 +144,17 @@ def build_bertopic_model(df: pd.DataFrame, outputs_dir: str):
 
     vectorizer_model = CountVectorizer(
         ngram_range=(1, 2),
-        stop_words=None,
+        stop_words="russian",#None,
         min_df=min_df,
         max_df=max_df
     )
 
-    umap_model = UMAP(n_neighbors=15, n_components=5, metric='cosine', random_state=42)
+#                                15
+    umap_model = UMAP(n_neighbors=5, n_components=5, metric='cosine', random_state=42)
 
     hdbscan_model = hdbscan.HDBSCAN(
-        min_cluster_size=5 if n_docs < 100 else 50,
-        min_samples=2 if n_docs < 100 else 10,
+        min_cluster_size=5 if n_docs < 100 else 15, # 50,
+        min_samples=2 if n_docs < 100 else 3,       # 10,
         metric='euclidean',
         cluster_selection_method='eom'
     )
