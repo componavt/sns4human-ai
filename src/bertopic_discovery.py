@@ -9,8 +9,8 @@ Env/CLI variables:
 - POSTS_PATH / POSTS_DIR: path to a folder with CSVs *or* a single CSV file.
 - PARQUET_PATH: where to write the cleaned parquet file (default: data/all_posts.parquet).
 - OUTPUTS_DIR: where to write model and CSV outputs (default: outputs/).
-- MIN_DF (int or float): min_df for CountVectorizer (default: 10). If float in (0,1], treated as fraction.
-- MAX_DF (int or float): max_df for CountVectorizer (default: 0.5). If float in (0,1], treated as fraction.
+- MIN_DF (int or float): min_df for CountVectorizer (default: 0.01). If float in (0,1], treated as fraction.
+- MAX_DF (int or float): max_df for CountVectorizer (default: 1.0). If float in (0,1], treated as fraction.
 - MIN_CLUSTER_SIZE (int): HDBSCAN min_cluster_size (default: 50; lower for tiny test data).
 - MIN_SAMPLES (int): HDBSCAN min_samples (default: 10).
 
@@ -67,9 +67,11 @@ def load_and_clean_posts(posts_path: str, output_path: str) -> pd.DataFrame:
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     frames = []
+    total_rows = 0
     for path in tqdm(files, desc='Loading CSVs'):
         try:
             df = pd.read_csv(path, encoding='utf-8')
+            total_rows += len(df)
             keep = [c for c in ['id', 'text', 'date', 'group', 'likes', 'reposts', 'views'] if c in df.columns]
             df = df[keep].copy()
             df['source_file'] = os.path.basename(path)
@@ -81,24 +83,19 @@ def load_and_clean_posts(posts_path: str, output_path: str) -> pd.DataFrame:
         except Exception as e:
             print(f"Skip {path}: {e}")
 
-    # Debug: print first 10 rows from frames after filtering non-empty text
-    print("Debug: First 10 rows from frames after filtering non-empty text:")
-    count = 0
-    for frame in frames:
-        # Print up to 10 rows in total from all frames
-        for idx, row in frame.iterrows():
-            print(row)
-            count += 1
-            if count >= 10:
-                break
-        if count >= 10:
-            break
-
     all_df = pd.concat(frames, ignore_index=True)
     all_df['text'] = all_df['text'].astype(str)
     all_df['text_clean'] = all_df['text'].map(normalize_text)
     all_df = all_df[all_df['text_clean'].str.len() >= 10].copy()
     all_df = all_df.drop_duplicates(subset=['text_clean']).reset_index(drop=True)
+
+    cleaned_rows = len(all_df)
+    if total_rows > 0:
+        percent = cleaned_rows / total_rows * 100
+        print(f"Total input rows: {total_rows}")
+        print(f"Rows after cleaning: {cleaned_rows} ({percent:.2f}%)")
+    else:
+        print("Warning: No input rows found.")
 
     if 'date' in all_df.columns:
         try:
@@ -111,44 +108,52 @@ def load_and_clean_posts(posts_path: str, output_path: str) -> pd.DataFrame:
     return all_df
 
 
+def _parse_df_param(env_name: str, n_docs: int, default: float):
+    """Helper to parse MIN_DF / MAX_DF from env as float fraction."""
+    val = os.environ.get(env_name)
+    if val is None:
+        return default
+    try:
+        if "." in val:
+            return float(val)
+        iv = int(val)
+        return iv / n_docs if n_docs > 0 else default
+    except Exception:
+        return default
+
+
 def build_bertopic_model(df: pd.DataFrame, outputs_dir: str):
     """Build BERTopic model and save outputs."""
     os.makedirs(outputs_dir, exist_ok=True)
 
     EMB_NAME = 'sentence-transformers/paraphrase-multilingual-mpnet-base-v2'
+    print(f"Loading embeddings model: {EMB_NAME}")
     embedder = SentenceTransformer(EMB_NAME)
 
     n_docs = len(df)
-    min_df_value = 2 if n_docs < 100 else 10
-    max_df_value = 0.5
+    print(f"Number of documents for BERTopic: {n_docs}")
 
-    # --- FIX: ensure consistency of min_df and max_df ---
-    if n_docs < min_df_value:
-        min_df_value = 1
+    # Parse min_df and max_df from env or use defaults
+    min_df = _parse_df_param('MIN_DF', n_docs, default=0.01)
+    max_df = _parse_df_param('MAX_DF', n_docs, default=1.0)
 
-    if isinstance(max_df_value, float):
-        max_df_abs = max_df_value * n_docs
-    else:
-        max_df_abs = max_df_value
+    if max_df <= min_df:
+        max_df = 1.0
 
-    if max_df_abs < min_df_value:
-        if n_docs > 1:
-            max_df_value = max( (min_df_value + 1) / n_docs, min_df_value / n_docs )
-        else:
-            max_df_value = 1.0
+    print(f"Vectorizer thresholds: min_df={min_df}, max_df={max_df}")
 
     vectorizer_model = CountVectorizer(
         ngram_range=(1, 2),
         stop_words=None,
-        min_df=min_df_value,
-        max_df=max_df_value
+        min_df=min_df,
+        max_df=max_df
     )
 
     umap_model = UMAP(n_neighbors=15, n_components=5, metric='cosine', random_state=42)
 
     hdbscan_model = hdbscan.HDBSCAN(
-        min_cluster_size=5 if len(df) < 100 else 50,
-        min_samples=2 if len(df) < 100 else 10,
+        min_cluster_size=5 if n_docs < 100 else 50,
+        min_samples=2 if n_docs < 100 else 10,
         metric='euclidean',
         cluster_selection_method='eom'
     )
@@ -161,7 +166,9 @@ def build_bertopic_model(df: pd.DataFrame, outputs_dir: str):
         language="multilingual"
     )
 
+    print("Fitting BERTopic model...")
     topics, probs = topic_model.fit_transform(df['text_clean'].tolist())
+    print("Model fitting completed.")
 
     model_path = os.path.join(outputs_dir, "bertopic_model")
     topic_model.save(model_path)
@@ -170,6 +177,7 @@ def build_bertopic_model(df: pd.DataFrame, outputs_dir: str):
     overview_path = os.path.join(outputs_dir, "topics_overview.csv")
     topic_info = topic_model.get_topic_info()
     topic_info.to_csv(overview_path, index=False)
+    print(f"Topics overview saved to {overview_path}")
 
     multi_path = os.path.join(outputs_dir, "post_topics_multi.csv")
     primary_path = os.path.join(outputs_dir, "post_topics_primary.csv")
@@ -180,9 +188,11 @@ def build_bertopic_model(df: pd.DataFrame, outputs_dir: str):
         "probability": probs
     })
     df_multi.to_csv(multi_path, index=False)
+    print(f"Per-post topic probabilities saved to {multi_path}")
 
     df_primary = df_multi.groupby("post_id").apply(lambda g: g.sort_values("probability", ascending=False).head(1))
     df_primary.to_csv(primary_path, index=False)
+    print(f"Primary topic per post saved to {primary_path}")
 
     print(f"Outputs saved in {outputs_dir}")
 
