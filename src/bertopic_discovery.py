@@ -42,17 +42,27 @@ from sklearn.feature_extraction.text import CountVectorizer
 from umap import UMAP
 import hdbscan
 from dotenv import load_dotenv
+import nltk
+from nltk.corpus import stopwords
 
+# Ensure Russian stopwords are available
+try:
+    _ = stopwords.words("russian")
+except LookupError:
+    nltk.download("stopwords")
+
+
+RUSSIAN_STOPWORDS = stopwords.words("russian")
 
 def normalize_text(s: str) -> str:
     """Minimal cleaning for short social texts while preserving meaning."""
     if not isinstance(s, str):
         return ""
     s = s.replace('\r', ' ').replace('\n', ' ').strip()
-    s = re.sub(r"https?://\S+", " ", s)  # remove URLs
-    s = regex.sub(r"#[\w\p{L}_-]+", " ", s, flags=regex.UNICODE)  # remove hashtags
-    s = regex.sub(r"@[\w\p{L}_-]+", " ", s, flags=regex.UNICODE)  # remove mentions
-    s = re.sub(r"\s+", " ", s)  # collapse spaces
+    s = re.sub(r"https?://\\S+", " ", s)  # remove URLs
+    s = regex.sub(r"#[\\w\\p{L}_-]+", " ", s, flags=regex.UNICODE)  # remove hashtags
+    s = regex.sub(r"@[\\w\\p{L}_-]+", " ", s, flags=regex.UNICODE)  # remove mentions
+    s = re.sub(r"\\s+", " ", s)  # collapse spaces
     return s.strip()
 
 
@@ -144,17 +154,17 @@ def build_bertopic_model(df: pd.DataFrame, outputs_dir: str):
 
     vectorizer_model = CountVectorizer(
         ngram_range=(1, 2),
-        stop_words="russian",#None,
+        stop_words=RUSSIAN_STOPWORDS,
         min_df=min_df,
         max_df=max_df
     )
 
-#                                15
+#                                 15
     umap_model = UMAP(n_neighbors=5, n_components=5, metric='cosine', random_state=42)
 
     hdbscan_model = hdbscan.HDBSCAN(
-        min_cluster_size=5 if n_docs < 100 else 15, # 50,
-        min_samples=2 if n_docs < 100 else 3,       # 10,
+        min_cluster_size=5 if n_docs < 100 else 15,# 50
+        min_samples=2 if n_docs < 100 else 3,      # 10
         metric='euclidean',
         cluster_selection_method='eom'
     )
